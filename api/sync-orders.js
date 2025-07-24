@@ -301,54 +301,38 @@ async function addOrderNote(orderId, note, shopifyStore, shopifyAccessToken) {
 
 async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
   try {
-    // For COD orders, we need to mark as paid manually since there's no auth transaction
+    console.log(`Attempting to capture payment for order ${orderId}`);
+    
+    // For COD orders, mark the order as paid directly
     const response = await fetch(
-      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
       {
-        method: 'POST',
+        method: 'PUT',
         headers: {
           'X-Shopify-Access-Token': shopifyAccessToken,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          transaction: {
-            kind: 'sale',
-            status: 'success',
-            message: 'COD payment received on delivery',
-            gateway: 'manual'
+          order: {
+            id: orderId,
+            financial_status: 'paid'
           }
         })
       }
     );
     
     if (response.ok) {
-      console.log(`✅ COD payment marked as received for order ${orderId}`);
+      console.log(`✅ Order ${orderId} marked as paid`);
       return true;
     } else {
-      // Fallback: Try to mark order as paid using a different method
-      const markPaidResponse = await fetch(
-        `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
-        {
-          method: 'PUT',
-          headers: {
-            'X-Shopify-Access-Token': shopifyAccessToken,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            order: {
-              id: orderId,
-              financial_status: 'paid'
-            }
-          })
-        }
-      );
-      
-      return markPaidResponse.ok;
+      const responseText = await response.text();
+      console.log(`❌ Failed to mark order ${orderId} as paid: ${response.status} - ${responseText}`);
+      return false;
     }
   } catch (error) {
-    console.error('Error marking COD payment as received:', error);
+    console.error('Error capturing COD payment:', error);
+    return false;
   }
-  return false;
 }
 
 async function updateFulfillmentToDelivered(orderId, shopifyStore, shopifyAccessToken) {
