@@ -78,7 +78,6 @@ async function processLead(lead, shopifyStore, shopifyAccessToken) {
     await addOrderNote(shopifyOrder.id, `PrimeCOD: Order confirmed (${lead.reference}) - Ready for COD delivery`, shopifyStore, shopifyAccessToken);
     await updateOrderTags(shopifyOrder.id, ['primecod-confirmed', 'cod-pending'], shopifyStore, shopifyAccessToken);
     updates.push('marked-as-confirmed');
-    // NO payment capture here - it's COD!
   }
   
   // Sync based on shipping status
@@ -98,7 +97,7 @@ async function processLead(lead, shopifyStore, shopifyAccessToken) {
     }
   }
   
-  // Handle delivered orders - CAPTURE PAYMENT ON DELIVERY (COD)
+  // Handle delivered orders - Mark as paid for accounting
   if (lead.delivered_at) {
     // If not already fulfilled, create fulfillment first
     if (shopifyOrder.fulfillment_status !== 'fulfilled') {
@@ -109,33 +108,36 @@ async function processLead(lead, shopifyStore, shopifyAccessToken) {
       }
     }
     
-    // CAPTURE PAYMENT - Customer paid the delivery driver
-    if (shopifyOrder.financial_status === 'pending' || shopifyOrder.financial_status === 'authorized') {
-      const paymentCaptured = await capturePayment(shopifyOrder.id, shopifyStore, shopifyAccessToken);
-      if (paymentCaptured) {
-        updates.push('cod-payment-captured');
+    // Mark as paid for accounting (COD payment received by driver)
+    if (shopifyOrder.financial_status === 'pending') {
+      const paymentMarked = await markAsPaid(shopifyOrder.id, shopifyStore, shopifyAccessToken);
+      if (paymentMarked) {
+        updates.push('cod-payment-recorded');
       }
     }
     
-    // Mark as delivered
+    // Mark fulfillment as delivered
     await updateFulfillmentToDelivered(shopifyOrder.id, shopifyStore, shopifyAccessToken);
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package delivered on ${lead.delivered_at} - COD payment received`, shopifyStore, shopifyAccessToken);
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package delivered on ${lead.delivered_at} - COD payment received by driver`, shopifyStore, shopifyAccessToken);
     await updateOrderTags(shopifyOrder.id, ['primecod-delivered', 'cod-paid'], shopifyStore, shopifyAccessToken);
     updates.push('delivered-and-paid');
   }
   
-  // Handle returned orders - REFUND THE ORDER
+  // Handle returned orders - Only create refund for actual returns
   if (lead.returned_at) {
-    // Create refund for returned COD orders
-    const refundSuccess = await createRefund(shopifyOrder.id, shopifyStore, shopifyAccessToken);
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package returned on ${lead.returned_at} - Processing refund`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-returned'], shopifyStore, shopifyAccessToken);
     
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package returned on ${lead.returned_at} - COD order cancelled/refunded`, shopifyStore, shopifyAccessToken);
-    await updateOrderTags(shopifyOrder.id, ['primecod-returned', 'cod-refunded'], shopifyStore, shopifyAccessToken);
-    
-    if (refundSuccess) {
-      updates.push('returned-and-refunded');
+    // Only create refund if order was previously paid
+    if (shopifyOrder.financial_status === 'paid') {
+      const refundSuccess = await createRefund(shopifyOrder.id, shopifyStore, shopifyAccessToken);
+      if (refundSuccess) {
+        updates.push('returned-and-refunded');
+      } else {
+        updates.push('returned-refund-pending');
+      }
     } else {
-      updates.push('returned-refund-pending');
+      updates.push('returned-no-refund-needed');
     }
   }
   
@@ -299,13 +301,11 @@ async function addOrderNote(orderId, note, shopifyStore, shopifyAccessToken) {
   }
 }
 
-async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
+async function markAsPaid(orderId, shopifyStore, shopifyAccessToken) {
   try {
     console.log(`Marking COD order ${orderId} as paid for accounting`);
     
-    // For COD orders, we need to mark as paid without touching existing transactions
-    // This is for accounting purposes to show revenue properly
-    
+    // For COD orders, mark as paid for accounting purposes
     const response = await fetch(
       `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
       {
@@ -316,14 +316,7 @@ async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
         },
         body: JSON.stringify({
           order: {
-            id: orderId,
-            financial_status: 'paid',
-            note_attributes: [
-              {
-                name: 'COD_Payment_Status',
-                value: 'Received via PrimeCOD delivery'
-              }
-            ]
+            financial_status: 'paid'
           }
         })
       }
