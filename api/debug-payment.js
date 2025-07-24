@@ -2,13 +2,10 @@ export default async function handler(req, res) {
   const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
   const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
   
-  // Order #1284 (PCOD-4663491) that should be delivered
-  const orderId = 6437174640891; // You might need to adjust this ID
-  
   try {
-    // Get order details
-    const orderResponse = await fetch(
-      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+    // Let's search for orders with the email from PCOD-4663491
+    const ordersResponse = await fetch(
+      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders.json?status=any&limit=50`,
       {
         headers: {
           'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -17,12 +14,27 @@ export default async function handler(req, res) {
       }
     );
     
-    const orderData = await orderResponse.json();
-    const order = orderData.order;
+    const ordersData = await ordersResponse.json();
+    
+    // Find order #1284 (the one that shows delivered-and-paid)
+    const order = ordersData.orders.find(o => o.order_number === 1284);
+    
+    if (!order) {
+      return res.status(200).json({
+        error: 'Order #1284 not found',
+        available_orders: ordersData.orders.map(o => ({
+          id: o.id,
+          order_number: o.order_number,
+          email: o.email,
+          financial_status: o.financial_status,
+          total_price: o.total_price
+        }))
+      });
+    }
     
     // Get existing transactions
     const transactionsResponse = await fetch(
-      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${order.id}/transactions.json`,
       {
         headers: {
           'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
@@ -35,7 +47,7 @@ export default async function handler(req, res) {
     
     // Try to create a COD payment transaction
     const paymentResult = await fetch(
-      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${order.id}/transactions.json`,
       {
         method: 'POST',
         headers: {
@@ -47,9 +59,9 @@ export default async function handler(req, res) {
             kind: 'sale',
             status: 'success',
             amount: order.total_price,
-            currency: order.currency,
-            gateway: 'Cash on Delivery',
-            source_name: 'PrimeCOD',
+            currency: order.currency || 'PLN',
+            gateway: 'manual',
+            source_name: 'PrimeCOD COD Payment',
             message: 'COD payment received on delivery'
           }
         })
@@ -64,7 +76,8 @@ export default async function handler(req, res) {
         order_number: order.order_number,
         financial_status: order.financial_status,
         total_price: order.total_price,
-        currency: order.currency
+        currency: order.currency,
+        email: order.email
       },
       existing_transactions: transactionsData.transactions,
       payment_attempt: {
@@ -75,6 +88,6 @@ export default async function handler(req, res) {
     });
     
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message, stack: error.stack });
   }
 }
