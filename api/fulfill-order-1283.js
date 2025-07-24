@@ -1,4 +1,4 @@
-// api/fulfill-order-1283.js
+// api/fulfill-order-1283-fixed.js
 export default async function handler(req, res) {
   const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
   const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -37,51 +37,75 @@ export default async function handler(req, res) {
     const orderId = order.id;
     
     console.log(`✅ Found order #${order.order_number} (ID: ${orderId})`);
+    console.log(`📋 Current status - Financial: ${order.financial_status}, Fulfillment: ${order.fulfillment_status}`);
     
-    // Step 2: Get the tracking number from PrimeCOD
+    // Step 2: Get locations to find the correct location_id
+    console.log('📍 Getting store locations...');
+    
+    const locationsResponse = await fetch(
+      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/locations.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    let locationId = null;
+    if (locationsResponse.ok) {
+      const locationsData = await locationsResponse.json();
+      // Use the first active location, or primary location
+      const primaryLocation = locationsData.locations.find(loc => loc.primary) || locationsData.locations[0];
+      locationId = primaryLocation?.id;
+      console.log(`📍 Using location: ${primaryLocation?.name} (ID: ${locationId})`);
+    }
+    
+    // Step 3: Get the tracking number from PrimeCOD
     console.log('📦 Fetching tracking info from PrimeCOD...');
     
-    const primecodResponse = await fetch('https://api.primecod.app/api/leads', {
-      headers: {
-        'Authorization': `Bearer ${process.env.PRIMECOD_TOKEN}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    if (!primecodResponse.ok) {
-      throw new Error(`PrimeCOD API error: ${primecodResponse.status}`);
-    }
-    
-    const primecodData = await primecodResponse.json();
-    const leads = primecodData.data;
-    
-    // Find matching lead by email
-    const customerEmail = order.customer?.email;
-    let matchingLead = null;
     let trackingNumber = null;
+    let matchingLead = null;
     
-    if (customerEmail) {
-      // Try to find by email and date proximity
-      const orderDate = new Date(order.created_at);
-      
-      matchingLead = leads.find(lead => {
-        if (lead.email !== customerEmail) return false;
-        
-        const leadDate = new Date(lead.created_at);
-        const timeDiff = Math.abs(orderDate - leadDate);
-        const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
-        
-        return daysDiff <= 3; // Within 3 days
+    try {
+      const primecodResponse = await fetch('https://api.primecod.app/api/leads', {
+        headers: {
+          'Authorization': `Bearer ${process.env.PRIMECOD_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       });
       
-      if (matchingLead) {
-        trackingNumber = matchingLead.tracking_number;
-        console.log(`📋 Found matching PrimeCOD lead: ${matchingLead.reference}`);
-        console.log(`📦 Tracking number: ${trackingNumber || 'Not available'}`);
+      if (primecodResponse.ok) {
+        const primecodData = await primecodResponse.json();
+        const leads = primecodData.data;
+        
+        // Find matching lead by email
+        const customerEmail = order.customer?.email;
+        if (customerEmail) {
+          const orderDate = new Date(order.created_at);
+          
+          matchingLead = leads.find(lead => {
+            if (lead.email !== customerEmail) return false;
+            
+            const leadDate = new Date(lead.created_at);
+            const timeDiff = Math.abs(orderDate - leadDate);
+            const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+            
+            return daysDiff <= 3; // Within 3 days
+          });
+          
+          if (matchingLead) {
+            trackingNumber = matchingLead.tracking_number;
+            console.log(`📋 Found matching PrimeCOD lead: ${matchingLead.reference}`);
+            console.log(`📦 Tracking number: ${trackingNumber || 'Not available'}`);
+          }
+        }
       }
+    } catch (error) {
+      console.log(`⚠️ Could not fetch from PrimeCOD: ${error.message}`);
     }
     
-    // Step 3: Check if already fulfilled
+    // Step 4: Check if already fulfilled
     if (order.fulfillment_status === 'fulfilled') {
       return res.json({
         message: `Order #${orderNumber} is already fulfilled`,
@@ -91,62 +115,49 @@ export default async function handler(req, res) {
         order_details: {
           id: orderId,
           order_number: order.order_number,
-          customer_email: customerEmail,
-          created_at: order.created_at
+          customer_email: order.customer?.email,
+          created_at: order.created_at,
+          financial_status: order.financial_status,
+          fulfillment_status: order.fulfillment_status
         }
       });
     }
     
-    // Step 4: Create fulfillment with tracking
-    console.log('🚀 Creating fulfillment...');
+    // Step 5: Try different fulfillment approaches
+    console.log('🚀 Attempting fulfillment...');
     
-    const fulfillmentData = {
-      fulfillment: {
-        notify_customer: true,
-        tracking_company: 'PrimeCOD'
-      }
-    };
+    // Approach 1: Simple fulfillment without location_id
+    let fulfillmentResult = await tryFulfillment1(orderId, trackingNumber, SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
     
-    // Add tracking number if available
-    if (trackingNumber) {
-      fulfillmentData.fulfillment.tracking_number = trackingNumber;
-      fulfillmentData.fulfillment.tracking_url = `https://track.primecod.app/${trackingNumber}`;
+    // Approach 2: With location_id if first failed
+    if (!fulfillmentResult.success && locationId) {
+      console.log('🔄 Trying with location_id...');
+      fulfillmentResult = await tryFulfillment2(orderId, trackingNumber, locationId, SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
     }
     
-    const fulfillmentResponse = await fetch(
-      `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
-      {
-        method: 'POST',
-        headers: {
-          'X-Shopify-Access-Token': SHOPIFY_ACCESS_TOKEN,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(fulfillmentData)
-      }
-    );
-    
-    const fulfillmentText = await fulfillmentResponse.text();
-    let fulfillmentResult;
-    
-    try {
-      fulfillmentResult = fulfillmentText ? JSON.parse(fulfillmentText) : { empty: true };
-    } catch (e) {
-      fulfillmentResult = { raw: fulfillmentText };
+    // Approach 3: With specific line items if still failed
+    if (!fulfillmentResult.success) {
+      console.log('🔄 Trying with line items...');
+      fulfillmentResult = await tryFulfillment3(orderId, trackingNumber, locationId, order.line_items, SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
     }
     
-    // Step 5: Add order note and tags
-    if (fulfillmentResponse.ok) {
+    // Approach 4: Minimal fulfillment as last resort
+    if (!fulfillmentResult.success) {
+      console.log('🔄 Trying minimal fulfillment...');
+      fulfillmentResult = await tryFulfillment4(orderId, SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
+    }
+    
+    // Step 6: Add order note and tags if successful
+    if (fulfillmentResult.success) {
       console.log('📝 Adding order note and tags...');
       
-      // Add note
       const noteText = matchingLead 
         ? `PrimeCOD: Package shipped with tracking ${trackingNumber || 'N/A'} (${matchingLead.reference}) - COD delivery in progress`
-        : `Order #${orderNumber} fulfilled via PrimeCOD integration`;
+        : `Order #${orderNumber} fulfilled manually via PrimeCOD integration`;
       
       await addOrderNote(orderId, noteText, SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
       
-      // Add tags
-      const tags = ['primecod-shipped', 'cod-in-transit'];
+      const tags = ['primecod-shipped', 'cod-in-transit', 'manual-fulfillment'];
       if (matchingLead) {
         tags.push(`primecod-${matchingLead.reference}`);
       }
@@ -154,7 +165,7 @@ export default async function handler(req, res) {
       await updateOrderTags(orderId, tags, SHOPIFY_STORE, SHOPIFY_ACCESS_TOKEN);
     }
     
-    // Step 6: Get final order status
+    // Step 7: Get final order status
     const finalOrderResponse = await fetch(
       `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
       {
@@ -168,15 +179,19 @@ export default async function handler(req, res) {
     const finalOrderData = await finalOrderResponse.json();
     
     res.json({
-      success: fulfillmentResponse.ok,
-      message: fulfillmentResponse.ok 
-        ? `Order #${orderNumber} successfully fulfilled with tracking` 
-        : `Failed to fulfill order #${orderNumber}`,
+      success: fulfillmentResult.success,
+      message: fulfillmentResult.success 
+        ? `Order #${orderNumber} successfully fulfilled!` 
+        : `Failed to fulfill order #${orderNumber} - all methods tried`,
       
       order_details: {
         shopify_order_id: orderId,
         order_number: order.order_number,
-        customer_email: customerEmail
+        customer_email: order.customer?.email,
+        initial_status: {
+          financial: order.financial_status,
+          fulfillment: order.fulfillment_status
+        }
       },
       
       primecod_details: {
@@ -185,14 +200,11 @@ export default async function handler(req, res) {
         shipping_status: matchingLead?.shipping_status || 'Unknown'
       },
       
-      fulfillment_result: {
-        success: fulfillmentResponse.ok,
-        status: fulfillmentResponse.status,
-        response: fulfillmentResult
-      },
+      fulfillment_attempts: fulfillmentResult.attempts,
       
       final_status: {
         fulfillment_status: finalOrderData.order?.fulfillment_status,
+        financial_status: finalOrderData.order?.financial_status,
         tags: finalOrderData.order?.tags
       }
     });
@@ -204,6 +216,176 @@ export default async function handler(req, res) {
       order_number: orderNumber
     });
   }
+}
+
+// Approach 1: Simple fulfillment
+async function tryFulfillment1(orderId, trackingNumber, shopifyStore, shopifyAccessToken) {
+  const fulfillmentData = {
+    fulfillment: {
+      notify_customer: true
+    }
+  };
+  
+  if (trackingNumber) {
+    fulfillmentData.fulfillment.tracking_number = trackingNumber;
+    fulfillmentData.fulfillment.tracking_company = 'PrimeCOD';
+  }
+  
+  const response = await fetch(
+    `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': shopifyAccessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(fulfillmentData)
+    }
+  );
+  
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    data = { raw: text };
+  }
+  
+  return {
+    success: response.ok,
+    method: 'Simple fulfillment',
+    status: response.status,
+    response: data,
+    attempts: [{ method: 'Simple', success: response.ok, status: response.status }]
+  };
+}
+
+// Approach 2: With location_id
+async function tryFulfillment2(orderId, trackingNumber, locationId, shopifyStore, shopifyAccessToken) {
+  const fulfillmentData = {
+    fulfillment: {
+      location_id: locationId,
+      notify_customer: true
+    }
+  };
+  
+  if (trackingNumber) {
+    fulfillmentData.fulfillment.tracking_number = trackingNumber;
+    fulfillmentData.fulfillment.tracking_company = 'PrimeCOD';
+  }
+  
+  const response = await fetch(
+    `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': shopifyAccessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(fulfillmentData)
+    }
+  );
+  
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    data = { raw: text };
+  }
+  
+  return {
+    success: response.ok,
+    method: 'With location_id',
+    status: response.status,
+    response: data,
+    attempts: [{ method: 'With location', success: response.ok, status: response.status }]
+  };
+}
+
+// Approach 3: With line items
+async function tryFulfillment3(orderId, trackingNumber, locationId, lineItems, shopifyStore, shopifyAccessToken) {
+  const fulfillmentData = {
+    fulfillment: {
+      notify_customer: true,
+      line_items: lineItems.map(item => ({
+        id: item.id,
+        quantity: item.quantity
+      }))
+    }
+  };
+  
+  if (locationId) {
+    fulfillmentData.fulfillment.location_id = locationId;
+  }
+  
+  if (trackingNumber) {
+    fulfillmentData.fulfillment.tracking_number = trackingNumber;
+    fulfillmentData.fulfillment.tracking_company = 'PrimeCOD';
+  }
+  
+  const response = await fetch(
+    `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': shopifyAccessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(fulfillmentData)
+    }
+  );
+  
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    data = { raw: text };
+  }
+  
+  return {
+    success: response.ok,
+    method: 'With line items',
+    status: response.status,
+    response: data,
+    attempts: [{ method: 'With line items', success: response.ok, status: response.status }]
+  };
+}
+
+// Approach 4: Minimal fulfillment
+async function tryFulfillment4(orderId, shopifyStore, shopifyAccessToken) {
+  const fulfillmentData = {
+    fulfillment: {}
+  };
+  
+  const response = await fetch(
+    `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': shopifyAccessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(fulfillmentData)
+    }
+  );
+  
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    data = { raw: text };
+  }
+  
+  return {
+    success: response.ok,
+    method: 'Minimal fulfillment',
+    status: response.status,
+    response: data,
+    attempts: [{ method: 'Minimal', success: response.ok, status: response.status }]
+  };
 }
 
 // Helper function to add order note
