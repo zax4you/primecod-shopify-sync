@@ -303,7 +303,7 @@ async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
   try {
     console.log(`Attempting to capture COD payment for order ${orderId}`);
     
-    // Get order details first
+    // Get order details
     const orderResponse = await fetch(
       `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
       {
@@ -315,45 +315,29 @@ async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
     );
     
     if (!orderResponse.ok) {
-      console.log('Failed to get order details');
       return false;
     }
     
     const orderData = await orderResponse.json();
     const order = orderData.order;
     
-    // Create a manual payment transaction to settle the COD debt
-    const paymentResponse = await fetch(
+    // Get existing transactions to find pending ones
+    const transactionsResponse = await fetch(
       `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
       {
-        method: 'POST',
         headers: {
           'X-Shopify-Access-Token': shopifyAccessToken,
           'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          transaction: {
-            kind: 'sale',
-            status: 'success',
-            amount: order.total_outstanding,
-            currency: order.currency,
-            gateway: 'Cash on Delivery',
-            message: 'COD payment received on delivery via PrimeCOD',
-            source_name: 'PrimeCOD Integration'
-          }
-        })
+        }
       }
     );
     
-    if (paymentResponse.ok) {
-      console.log(`✅ COD payment transaction created for order ${orderId}`);
-      return true;
-    } else {
-      const errorText = await paymentResponse.text();
-      console.log(`❌ Failed to create COD payment: ${paymentResponse.status} - ${errorText}`);
-      
-      // Fallback: Try to cancel the pending transaction and create a new successful one
-      const cancelResponse = await fetch(
+    const transactionsData = await transactionsResponse.json();
+    const pendingTransaction = transactionsData.transactions.find(t => t.status === 'pending' && t.kind === 'sale');
+    
+    if (pendingTransaction) {
+      // First void the pending transaction
+      const voidResponse = await fetch(
         `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
         {
           method: 'POST',
@@ -364,38 +348,46 @@ async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
           body: JSON.stringify({
             transaction: {
               kind: 'void',
-              parent_id: 7665699586299 // The pending transaction ID
+              parent_id: pendingTransaction.id
             }
           })
         }
       );
       
-      if (cancelResponse.ok) {
-        // Now create the successful payment
-        const newPaymentResponse = await fetch(
-          `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
-          {
-            method: 'POST',
-            headers: {
-              'X-Shopify-Access-Token': shopifyAccessToken,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              transaction: {
-                kind: 'sale',
-                status: 'success',
-                amount: order.total_outstanding,
-                currency: order.currency,
-                gateway: 'manual',
-                message: 'COD payment received on delivery'
-              }
-            })
-          }
-        );
-        
-        return newPaymentResponse.ok;
+      if (!voidResponse.ok) {
+        console.log('Failed to void pending transaction');
+        return false;
       }
-      
+    }
+    
+    // Now create a successful payment transaction
+    const paymentResponse = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          transaction: {
+            kind: 'capture',
+            status: 'success',
+            amount: order.total_outstanding,
+            currency: order.currency,
+            gateway: 'manual',
+            message: 'COD payment received on delivery via PrimeCOD'
+          }
+        })
+      }
+    );
+    
+    if (paymentResponse.ok) {
+      console.log(`✅ COD payment captured for order ${orderId}`);
+      return true;
+    } else {
+      const errorText = await paymentResponse.text();
+      console.log(`❌ Failed to capture payment: ${paymentResponse.status} - ${errorText}`);
       return false;
     }
     
