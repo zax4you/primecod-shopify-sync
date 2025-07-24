@@ -132,18 +132,30 @@ async function findShopifyOrder(lead, shopifyStore, shopifyAccessToken) {
     if (emailSearch.ok) {
       const emailResults = await emailSearch.json();
       
-      // Match by total price and date proximity
-      const matchingOrder = emailResults.orders.find(order => {
-        const orderTotal = parseFloat(order.total_price);
-        const leadTotal = parseFloat(lead.total_price_eur);
-        const priceDiff = Math.abs(orderTotal - leadTotal);
-        
-        // Allow 10% price difference for currency conversion
-        return priceDiff < (orderTotal * 0.1);
-      });
+      // If only one order found with this email, assume it's a match
+      if (emailResults.orders && emailResults.orders.length === 1) {
+        return emailResults.orders[0];
+      }
       
-      if (matchingOrder) {
-        return matchingOrder;
+      // If multiple orders, try to match by date proximity (within 2 days)
+      if (emailResults.orders && emailResults.orders.length > 1) {
+        const leadDate = new Date(lead.created_at);
+        
+        const matchingOrder = emailResults.orders.find(order => {
+          const orderDate = new Date(order.created_at);
+          const timeDiff = Math.abs(leadDate - orderDate);
+          const daysDiff = timeDiff / (1000 * 60 * 60 * 24);
+          
+          // Match if within 2 days
+          return daysDiff <= 2;
+        });
+        
+        if (matchingOrder) {
+          return matchingOrder;
+        }
+        
+        // If no date match, return the most recent one
+        return emailResults.orders[0];
       }
     }
   }
