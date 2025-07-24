@@ -1,0 +1,16 @@
+{
+  "name": "primecod-shopify-sync",
+  "version": "1.0.0",
+  "description": "Sync PrimeCOD orders with Shopify",
+  "main": "api/sync-orders.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
