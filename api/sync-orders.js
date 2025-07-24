@@ -69,15 +69,16 @@ async function processLead(lead, shopifyStore, shopifyAccessToken) {
   
   // Sync based on confirmation status
   if (lead.confirmation_status === 'new') {
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order received (${lead.reference})`, shopifyStore, shopifyAccessToken);
-    await updateOrderTags(shopifyOrder.id, ['primecod-new'], shopifyStore, shopifyAccessToken);
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order received (${lead.reference}) - COD`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-new', 'cod-order'], shopifyStore, shopifyAccessToken);
     updates.push('marked-as-new');
   }
   
   if (lead.confirmation_status === 'confirmed') {
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order confirmed (${lead.reference})`, shopifyStore, shopifyAccessToken);
-    await updateOrderTags(shopifyOrder.id, ['primecod-confirmed'], shopifyStore, shopifyAccessToken);
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order confirmed (${lead.reference}) - Ready for COD delivery`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-confirmed', 'cod-pending'], shopifyStore, shopifyAccessToken);
     updates.push('marked-as-confirmed');
+    // NO payment capture here - it's COD!
   }
   
   // Sync based on shipping status
@@ -88,23 +89,54 @@ async function processLead(lead, shopifyStore, shopifyAccessToken) {
   }
   
   if (lead.shipping_status === 'shipped' && lead.tracking_number) {
-    await createFulfillment(shopifyOrder.id, lead.tracking_number, shopifyStore, shopifyAccessToken);
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package shipped with tracking ${lead.tracking_number}`, shopifyStore, shopifyAccessToken);
-    updates.push('fulfilled-with-tracking');
+    // Create fulfillment with tracking for shipped orders
+    const fulfillmentSuccess = await createFulfillment(shopifyOrder.id, lead.tracking_number, shopifyStore, shopifyAccessToken);
+    if (fulfillmentSuccess) {
+      await addOrderNote(shopifyOrder.id, `PrimeCOD: Package shipped with tracking ${lead.tracking_number} - COD delivery in progress`, shopifyStore, shopifyAccessToken);
+      await updateOrderTags(shopifyOrder.id, ['primecod-shipped', 'cod-in-transit'], shopifyStore, shopifyAccessToken);
+      updates.push('fulfilled-with-tracking');
+    }
   }
   
-  // Handle delivered orders
+  // Handle delivered orders - CAPTURE PAYMENT ON DELIVERY (COD)
   if (lead.delivered_at) {
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package delivered on ${lead.delivered_at}`, shopifyStore, shopifyAccessToken);
-    await updateOrderTags(shopifyOrder.id, ['primecod-delivered'], shopifyStore, shopifyAccessToken);
-    updates.push('marked-as-delivered');
+    // If not already fulfilled, create fulfillment first
+    if (shopifyOrder.fulfillment_status !== 'fulfilled') {
+      if (lead.tracking_number) {
+        await createFulfillment(shopifyOrder.id, lead.tracking_number, shopifyStore, shopifyAccessToken);
+      } else {
+        await createFulfillment(shopifyOrder.id, null, shopifyStore, shopifyAccessToken);
+      }
+    }
+    
+    // CAPTURE PAYMENT - Customer paid the delivery driver
+    if (shopifyOrder.financial_status === 'pending' || shopifyOrder.financial_status === 'authorized') {
+      const paymentCaptured = await capturePayment(shopifyOrder.id, shopifyStore, shopifyAccessToken);
+      if (paymentCaptured) {
+        updates.push('cod-payment-captured');
+      }
+    }
+    
+    // Mark as delivered
+    await updateFulfillmentToDelivered(shopifyOrder.id, shopifyStore, shopifyAccessToken);
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package delivered on ${lead.delivered_at} - COD payment received`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-delivered', 'cod-paid'], shopifyStore, shopifyAccessToken);
+    updates.push('delivered-and-paid');
   }
   
-  // Handle returned orders
+  // Handle returned orders - REFUND THE ORDER
   if (lead.returned_at) {
-    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package returned on ${lead.returned_at}`, shopifyStore, shopifyAccessToken);
-    await updateOrderTags(shopifyOrder.id, ['primecod-returned'], shopifyStore, shopifyAccessToken);
-    updates.push('marked-as-returned');
+    // Create refund for returned COD orders
+    const refundSuccess = await createRefund(shopifyOrder.id, shopifyStore, shopifyAccessToken);
+    
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package returned on ${lead.returned_at} - COD order cancelled/refunded`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-returned', 'cod-refunded'], shopifyStore, shopifyAccessToken);
+    
+    if (refundSuccess) {
+      updates.push('returned-and-refunded');
+    } else {
+      updates.push('returned-refund-pending');
+    }
   }
   
   console.log(`📝 Updated Shopify order ${shopifyOrder.order_number} for PrimeCOD ${lead.reference}`);
@@ -164,6 +196,18 @@ async function findShopifyOrder(lead, shopifyStore, shopifyAccessToken) {
 }
 
 async function createFulfillment(orderId, trackingNumber, shopifyStore, shopifyAccessToken) {
+  const fulfillmentData = {
+    fulfillment: {
+      notify_customer: true
+    }
+  };
+  
+  // Add tracking number if available
+  if (trackingNumber) {
+    fulfillmentData.fulfillment.tracking_number = trackingNumber;
+    fulfillmentData.fulfillment.tracking_company = 'PrimeCOD';
+  }
+  
   const response = await fetch(
     `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
     {
@@ -172,13 +216,7 @@ async function createFulfillment(orderId, trackingNumber, shopifyStore, shopifyA
         'X-Shopify-Access-Token': shopifyAccessToken,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        fulfillment: {
-          tracking_number: trackingNumber,
-          tracking_company: 'PrimeCOD',
-          notify_customer: true
-        }
-      })
+      body: JSON.stringify(fulfillmentData)
     }
   );
   
@@ -259,4 +297,140 @@ async function addOrderNote(orderId, note, shopifyStore, shopifyAccessToken) {
     
     return response.ok;
   }
+}
+
+async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
+  try {
+    // Get order transactions
+    const transactionsResponse = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (transactionsResponse.ok) {
+      const transactionsData = await transactionsResponse.json();
+      const authTransaction = transactionsData.transactions.find(t => t.kind === 'authorization' && t.status === 'success');
+      
+      if (authTransaction) {
+        // Capture the payment
+        const captureResponse = await fetch(
+          `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+          {
+            method: 'POST',
+            headers: {
+              'X-Shopify-Access-Token': shopifyAccessToken,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              transaction: {
+                kind: 'capture',
+                parent_id: authTransaction.id
+              }
+            })
+          }
+        );
+        
+        return captureResponse.ok;
+      }
+    }
+  } catch (error) {
+    console.error('Error capturing payment:', error);
+  }
+  return false;
+}
+
+async function updateFulfillmentToDelivered(orderId, shopifyStore, shopifyAccessToken) {
+  try {
+    // Get existing fulfillments
+    const fulfillmentsResponse = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (fulfillmentsResponse.ok) {
+      const fulfillmentsData = await fulfillmentsResponse.json();
+      const fulfillment = fulfillmentsData.fulfillments[0];
+      
+      if (fulfillment) {
+        // Update fulfillment status to delivered
+        const updateResponse = await fetch(
+          `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/fulfillments/${fulfillment.id}.json`,
+          {
+            method: 'PUT',
+            headers: {
+              'X-Shopify-Access-Token': shopifyAccessToken,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              fulfillment: {
+                id: fulfillment.id,
+                status: 'delivered'
+              }
+            })
+          }
+        );
+        
+        return updateResponse.ok;
+      }
+    }
+  } catch (error) {
+    console.error('Error updating fulfillment:', error);
+  }
+  return false;
+}
+
+async function createRefund(orderId, shopifyStore, shopifyAccessToken) {
+  try {
+    // Get order details first
+    const orderResponse = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (orderResponse.ok) {
+      const orderData = await orderResponse.json();
+      const order = orderData.order;
+      
+      // Create refund for returned orders
+      const refundResponse = await fetch(
+        `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/refunds.json`,
+        {
+          method: 'POST',
+          headers: {
+            'X-Shopify-Access-Token': shopifyAccessToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            refund: {
+              note: 'COD order returned - automatic refund',
+              refund_line_items: order.line_items.map(item => ({
+                line_item_id: item.id,
+                quantity: item.quantity
+              }))
+            }
+          })
+        }
+      );
+      
+      return refundResponse.ok;
+    }
+  } catch (error) {
+    console.error('Error creating refund:', error);
+  }
+  return false;
 }
