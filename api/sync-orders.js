@@ -301,45 +301,52 @@ async function addOrderNote(orderId, note, shopifyStore, shopifyAccessToken) {
 
 async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
   try {
-    // Get order transactions
-    const transactionsResponse = await fetch(
+    // For COD orders, we need to mark as paid manually since there's no auth transaction
+    const response = await fetch(
       `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
       {
+        method: 'POST',
         headers: {
           'X-Shopify-Access-Token': shopifyAccessToken,
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({
+          transaction: {
+            kind: 'sale',
+            status: 'success',
+            message: 'COD payment received on delivery',
+            gateway: 'manual'
+          }
+        })
       }
     );
     
-    if (transactionsResponse.ok) {
-      const transactionsData = await transactionsResponse.json();
-      const authTransaction = transactionsData.transactions.find(t => t.kind === 'authorization' && t.status === 'success');
+    if (response.ok) {
+      console.log(`✅ COD payment marked as received for order ${orderId}`);
+      return true;
+    } else {
+      // Fallback: Try to mark order as paid using a different method
+      const markPaidResponse = await fetch(
+        `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+        {
+          method: 'PUT',
+          headers: {
+            'X-Shopify-Access-Token': shopifyAccessToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            order: {
+              id: orderId,
+              financial_status: 'paid'
+            }
+          })
+        }
+      );
       
-      if (authTransaction) {
-        // Capture the payment
-        const captureResponse = await fetch(
-          `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
-          {
-            method: 'POST',
-            headers: {
-              'X-Shopify-Access-Token': shopifyAccessToken,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              transaction: {
-                kind: 'capture',
-                parent_id: authTransaction.id
-              }
-            })
-          }
-        );
-        
-        return captureResponse.ok;
-      }
+      return markPaidResponse.ok;
     }
   } catch (error) {
-    console.error('Error capturing payment:', error);
+    console.error('Error marking COD payment as received:', error);
   }
   return false;
 }
