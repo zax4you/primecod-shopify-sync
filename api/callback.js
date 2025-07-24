@@ -2,7 +2,7 @@
 export default async function callbackHandler(req, res) {
   const CLIENT_ID = '695f76c66c6db4940e81223f7226fd41';
   const CLIENT_SECRET = '7401fec18c0f3e1b73e555e0bc5ebb20';
-  const SHOP = 'yavina';
+  const SHOP = '334c82-e3'; // Your actual store handle
   
   const { code, state } = req.query;
   
