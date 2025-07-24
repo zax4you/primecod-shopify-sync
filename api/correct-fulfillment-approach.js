@@ -24,14 +24,17 @@ export default async function handler(req, res) {
                 id
                 status
                 assignedLocation {
-                  id
-                  name
+                  location {
+                    id
+                    name
+                  }
                 }
                 lineItems(first: 20) {
                   edges {
                     node {
                       id
-                      quantity
+                      totalQuantity
+                      remainingQuantity
                       lineItem {
                         id
                         title
@@ -89,7 +92,7 @@ export default async function handler(req, res) {
       const fulfillmentOrder = fulfillmentOrderEdge.node;
       
       console.log(`🔄 Processing fulfillment order: ${fulfillmentOrder.id}`);
-      console.log(`📍 Location: ${fulfillmentOrder.assignedLocation.name}`);
+      console.log(`📍 Location: ${fulfillmentOrder.assignedLocation.location.name}`);
       console.log(`📊 Status: ${fulfillmentOrder.status}`);
       
       // Step 3: Create fulfillment using the CORRECT modern API
@@ -115,13 +118,13 @@ export default async function handler(req, res) {
       // Build line items using FulfillmentOrderLineItem IDs (not Order LineItem IDs!)
       const fulfillmentLineItems = fulfillmentOrder.lineItems.edges.map(edge => ({
         id: edge.node.id, // This is the FulfillmentOrderLineItem ID!
-        quantity: edge.node.quantity
+        quantity: edge.node.remainingQuantity || edge.node.totalQuantity
       }));
       
       const fulfillmentVariables = {
         fulfillment: {
           lineItems: fulfillmentLineItems,
-          locationId: fulfillmentOrder.assignedLocation.id,
+          locationId: fulfillmentOrder.assignedLocation.location.id,
           trackingInfo: {
             number: `PRIMECOD-CORRECT-${Date.now()}`,
             company: "PrimeCOD"
@@ -157,7 +160,7 @@ export default async function handler(req, res) {
       
       fulfillmentResults.push({
         fulfillment_order_id: fulfillmentOrder.id,
-        location: fulfillmentOrder.assignedLocation.name,
+        location: fulfillmentOrder.assignedLocation.location.name,
         status: fulfillmentOrder.status,
         success: isSuccess,
         response: fulfillmentData,
@@ -223,7 +226,7 @@ export default async function handler(req, res) {
       fulfillment_orders: fulfillmentOrders.map(edge => ({
         id: edge.node.id,
         status: edge.node.status,
-        location: edge.node.assignedLocation.name,
+        location: edge.node.assignedLocation.location.name,
         line_items_count: edge.node.lineItems.edges.length
       })),
       
