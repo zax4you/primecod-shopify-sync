@@ -303,32 +303,61 @@ async function capturePayment(orderId, shopifyStore, shopifyAccessToken) {
   try {
     console.log(`Attempting to capture payment for order ${orderId}`);
     
-    // For COD orders, mark the order as paid directly
-    const response = await fetch(
-      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+    // First, get the pending transaction
+    const transactionsResponse = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
       {
-        method: 'PUT',
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!transactionsResponse.ok) {
+      console.log('Failed to get transactions');
+      return false;
+    }
+    
+    const transactionsData = await transactionsResponse.json();
+    const pendingTransaction = transactionsData.transactions.find(t => t.status === 'pending');
+    
+    if (!pendingTransaction) {
+      console.log('No pending transaction found');
+      return false;
+    }
+    
+    // Create a new successful transaction to settle the pending one
+    const settlementResponse = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}/transactions.json`,
+      {
+        method: 'POST',
         headers: {
           'X-Shopify-Access-Token': shopifyAccessToken,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          order: {
-            id: orderId,
-            financial_status: 'paid'
+          transaction: {
+            kind: 'capture',
+            parent_id: pendingTransaction.id,
+            amount: pendingTransaction.amount,
+            currency: pendingTransaction.currency,
+            gateway: 'manual',
+            status: 'success'
           }
         })
       }
     );
     
-    if (response.ok) {
-      console.log(`✅ Order ${orderId} marked as paid`);
+    if (settlementResponse.ok) {
+      console.log(`✅ COD payment captured for order ${orderId}`);
       return true;
     } else {
-      const responseText = await response.text();
-      console.log(`❌ Failed to mark order ${orderId} as paid: ${response.status} - ${responseText}`);
+      const errorText = await settlementResponse.text();
+      console.log(`❌ Failed to capture payment: ${settlementResponse.status} - ${errorText}`);
       return false;
     }
+    
   } catch (error) {
     console.error('Error capturing COD payment:', error);
     return false;
