@@ -2,7 +2,7 @@
 export default async function handler(req, res) {
   // Environment variables (set in Vercel dashboard)
   const PRIMECOD_TOKEN = process.env.PRIMECOD_TOKEN;
-  const SHOPIFY_STORE = process.env.SHOPIFY_STORE; // yavina
+  const SHOPIFY_STORE = process.env.SHOPIFY_STORE;
   const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
   
   try {
@@ -57,11 +57,6 @@ export default async function handler(req, res) {
 }
 
 async function processLead(lead, shopifyStore, shopifyAccessToken) {
-  // Skip if no meaningful status change
-  if (!lead.confirmation_status && !lead.shipping_status && !lead.tracking_number) {
-    return null;
-  }
-  
   // Find corresponding Shopify order
   const shopifyOrder = await findShopifyOrder(lead, shopifyStore, shopifyAccessToken);
   
@@ -72,10 +67,44 @@ async function processLead(lead, shopifyStore, shopifyAccessToken) {
   
   const updates = [];
   
-  // Update based on shipping status
+  // Sync based on confirmation status
+  if (lead.confirmation_status === 'new') {
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order received (${lead.reference})`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-new'], shopifyStore, shopifyAccessToken);
+    updates.push('marked-as-new');
+  }
+  
+  if (lead.confirmation_status === 'confirmed') {
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order confirmed (${lead.reference})`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-confirmed'], shopifyStore, shopifyAccessToken);
+    updates.push('marked-as-confirmed');
+  }
+  
+  // Sync based on shipping status
+  if (lead.shipping_status === 'order placed') {
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Order placed with supplier (${lead.reference})`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-processing'], shopifyStore, shopifyAccessToken);
+    updates.push('marked-as-processing');
+  }
+  
   if (lead.shipping_status === 'shipped' && lead.tracking_number) {
     await createFulfillment(shopifyOrder.id, lead.tracking_number, shopifyStore, shopifyAccessToken);
-    updates.push('fulfilled');
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package shipped with tracking ${lead.tracking_number}`, shopifyStore, shopifyAccessToken);
+    updates.push('fulfilled-with-tracking');
+  }
+  
+  // Handle delivered orders
+  if (lead.delivered_at) {
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package delivered on ${lead.delivered_at}`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-delivered'], shopifyStore, shopifyAccessToken);
+    updates.push('marked-as-delivered');
+  }
+  
+  // Handle returned orders
+  if (lead.returned_at) {
+    await addOrderNote(shopifyOrder.id, `PrimeCOD: Package returned on ${lead.returned_at}`, shopifyStore, shopifyAccessToken);
+    await updateOrderTags(shopifyOrder.id, ['primecod-returned'], shopifyStore, shopifyAccessToken);
+    updates.push('marked-as-returned');
   }
   
   console.log(`📝 Updated Shopify order ${shopifyOrder.order_number} for PrimeCOD ${lead.reference}`);
@@ -142,4 +171,80 @@ async function createFulfillment(orderId, trackingNumber, shopifyStore, shopifyA
   );
   
   return response.ok;
+}
+
+async function updateOrderTags(orderId, newTags, shopifyStore, shopifyAccessToken) {
+  // First get existing tags
+  const orderResponse = await fetch(
+    `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+    {
+      headers: {
+        'X-Shopify-Access-Token': shopifyAccessToken,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  
+  if (orderResponse.ok) {
+    const orderData = await orderResponse.json();
+    const existingTags = orderData.order.tags ? orderData.order.tags.split(', ') : [];
+    const allTags = [...new Set([...existingTags, ...newTags])]; // Remove duplicates
+    
+    const response = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+      {
+        method: 'PUT',
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          order: {
+            id: orderId,
+            tags: allTags.join(', ')
+          }
+        })
+      }
+    );
+    
+    return response.ok;
+  }
+}
+
+async function addOrderNote(orderId, note, shopifyStore, shopifyAccessToken) {
+  // Get existing order to preserve existing notes
+  const orderResponse = await fetch(
+    `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+    {
+      headers: {
+        'X-Shopify-Access-Token': shopifyAccessToken,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
+  
+  if (orderResponse.ok) {
+    const orderData = await orderResponse.json();
+    const existingNote = orderData.order.note || '';
+    const newNote = existingNote ? `${existingNote}\n\n${note}` : note;
+    
+    const response = await fetch(
+      `https://${shopifyStore}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`,
+      {
+        method: 'PUT',
+        headers: {
+          'X-Shopify-Access-Token': shopifyAccessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          order: {
+            id: orderId,
+            note: newNote
+          }
+        })
+      }
+    );
+    
+    return response.ok;
+  }
 }
