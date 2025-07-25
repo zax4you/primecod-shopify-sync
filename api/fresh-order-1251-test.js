@@ -79,48 +79,46 @@ export default async function handler(req, res) {
     
     console.log('✅ STEP 1 SUCCESS: All required scopes verified!');
     
-    // STEP 2: Find Order #1251
-    console.log('📋 STEP 2: Finding Order #1251...');
+    // STEP 2: Get Order #1251 directly (we know it exists)
+    console.log('📋 STEP 2: Getting Order #1251 directly...');
     
-    const findOrderQuery = `
-      query findOrder($query: String!) {
-        orders(first: 10, query: $query) {
-          edges {
-            node {
-              id
-              legacyResourceId
-              name
-              email
-              phone
-              createdAt
-              financialStatus
-              fulfillmentStatus
-              customer {
-                firstName
-                lastName
-              }
-              billingAddress {
-                firstName
-                lastName
-                city
-                address1
-                phone
-              }
-              totalPriceSet {
-                shopMoney {
-                  amount
-                  currencyCode
-                }
-              }
-              paymentGatewayNames
-              tags
+    const orderId = "6428610822395"; // Direct ID from the URL
+    
+    const getOrderQuery = `
+      query getOrder($id: ID!) {
+        order(id: $id) {
+          id
+          legacyResourceId
+          name
+          email
+          phone
+          createdAt
+          financialStatus
+          fulfillmentStatus
+          customer {
+            firstName
+            lastName
+          }
+          billingAddress {
+            firstName
+            lastName
+            city
+            address1
+            phone
+          }
+          totalPriceSet {
+            shopMoney {
+              amount
+              currencyCode
             }
           }
+          paymentGatewayNames
+          tags
         }
       }
     `;
     
-    const findOrderResponse = await fetch(
+    const getOrderResponse = await fetch(
       `https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`,
       {
         method: 'POST',
@@ -129,30 +127,30 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          query: findOrderQuery,
+          query: getOrderQuery,
           variables: {
-            query: `name:#${TARGET_ORDER_NUMBER}`
+            id: `gid://shopify/Order/${orderId}`
           }
         })
       }
     );
     
-    const findOrderData = await findOrderResponse.json();
+    const getOrderData = await getOrderResponse.json();
     
-    if (!findOrderData.data?.orders?.edges?.length) {
+    if (!getOrderData.data?.order) {
       return res.json({
         success: false,
-        step: "STEP 2: Find Order",
-        error: `❌ Order #${TARGET_ORDER_NUMBER} not found`,
-        message: "Could not locate the target order",
-        searched_for: `#${TARGET_ORDER_NUMBER}`
+        step: "STEP 2: Get Order",
+        error: `❌ Order #${TARGET_ORDER_NUMBER} not accessible`,
+        message: "Could not access the target order",
+        order_id_tried: orderId,
+        graphql_errors: getOrderData.errors
       });
     }
     
-    const order = findOrderData.data.orders.edges[0].node;
-    const orderId = order.legacyResourceId;
+    const order = getOrderData.data.order;
     
-    console.log(`✅ STEP 2 SUCCESS: Found Order ${order.name}`);
+    console.log(`✅ STEP 2 SUCCESS: Found Order ${order.name} (ID: ${orderId})`);
     console.log(`📊 Customer: ${order.customer?.firstName} ${order.customer?.lastName}`);
     console.log(`📧 Email: ${order.email}`);
     console.log(`💰 Status: ${order.financialStatus}/${order.fulfillmentStatus}`);
