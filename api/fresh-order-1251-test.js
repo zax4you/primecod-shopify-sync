@@ -362,7 +362,10 @@ export default async function handler(req, res) {
       console.log(`📦 Fulfillment ID: ${fulfillmentData.data.fulfillmentCreate.fulfillment.id}`);
     } else {
       console.log(`❌ STEP 5 FAILED: Fulfillment creation failed`);
-      console.log(`📝 Errors: ${JSON.stringify(fulfillmentData.data?.fulfillmentCreate?.userErrors)}`);
+      console.log(`📝 Response Status: ${fulfillmentResponse.status}`);
+      console.log(`📝 Response OK: ${fulfillmentResponse.ok}`);
+      console.log(`📝 Full Response:`, JSON.stringify(fulfillmentData, null, 2));
+      console.log(`📝 User Errors:`, JSON.stringify(fulfillmentData.data?.fulfillmentCreate?.userErrors, null, 2));
     }
     
     // STEP 6: Test Payment Update (if fulfillment succeeded)
@@ -472,7 +475,10 @@ export default async function handler(req, res) {
         success: fulfillmentSuccess,
         fulfillment_id: fulfillmentData.data?.fulfillmentCreate?.fulfillment?.id,
         tracking_number: testTrackingNumber,
-        user_errors: fulfillmentData.data?.fulfillmentCreate?.userErrors || []
+        user_errors: fulfillmentData.data?.fulfillmentCreate?.userErrors || [],
+        full_response: fulfillmentData, // Include full response for debugging
+        response_status: fulfillmentResponse.status,
+        response_ok: fulfillmentResponse.ok
       },
       
       next_steps: overallSuccess ? [
