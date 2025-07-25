@@ -1,0 +1,48 @@
+name: PrimeCOD Sync 3x Daily
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 7 AM Poland (6 AM UTC)
+    - cron: '0 12 * * *'  # 1 PM Poland (12 PM UTC)  
+    - cron: '0 18 * * *'  # 7 PM Poland (6 PM UTC)
+  workflow_dispatch:      # Manual trigger button
+
+jobs:
+  sync-primecod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get current time
+        run: echo "🕐 Sync started at $(date)"
+        
+      - name: Run PrimeCOD Sync
+        run: |
+          echo "🚀 Calling PrimeCOD sync endpoint..."
+          response=$(curl -s https://primecod-shopify-sync.vercel.app/api/sync-orders)
+          
+          echo "📝 Response received, parsing..."
+          
+          if echo "$response" | jq -e '.success' > /dev/null; then
+            echo "✅ Sync completed successfully!"
+            echo "📊 Sync Summary:"
+            echo "$response" | jq '.summary'
+            
+            orders_updated=$(echo "$response" | jq -r '.summary.orders_updated // 0')
+            fulfilled=$(echo "$response" | jq -r '.summary.fulfilled_orders // 0')
+            paid=$(echo "$response" | jq -r '.summary.paid_orders // 0')
+            refunded=$(echo "$response" | jq -r '.summary.refunded_orders // 0')
+            errors=$(echo "$response" | jq -r '.summary.error_count // 0')
+            
+            echo "🎯 Quick Stats: $orders_updated orders updated, $fulfilled fulfilled, $paid paid, $refunded refunded, $errors errors"
+            
+            if [ "$errors" -gt 0 ]; then
+              echo "⚠️ Warning: $errors errors occurred during sync"
+            fi
+            
+          else
+            echo "❌ Sync failed!"
+            echo "🔍 Error details:"
+            echo "$response" | jq '.error'
+            exit 1
+          fi
+          
+      - name: Completion time
+        run: echo "🏁 Sync completed at $(date)"
