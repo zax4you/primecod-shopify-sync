@@ -153,8 +153,18 @@ export default async function handler(req, res) {
     console.log(`✅ STEP 2 SUCCESS: Found Order ${order.name} (ID: ${orderId})`);
     console.log(`📊 Customer: ${order.customer?.firstName} ${order.customer?.lastName}`);
     console.log(`📧 Email: ${order.email}`);
+    console.log(`📱 Phone: ${order.phone}`);
     console.log(`💰 Status: ${order.displayFinancialStatus}/${order.displayFulfillmentStatus}`);
     console.log(`🏷️ Tags: ${order.tags}`);
+    console.log(`💳 Payment Gateway: ${order.paymentGatewayNames}`);
+    
+    // Debug: Check if this is why customer email is null
+    if (!order.email) {
+      console.log('⚠️ WARNING: Order has no email address!');
+    }
+    if (!order.customer) {
+      console.log('⚠️ WARNING: Order has no customer data!');
+    }
     
     // STEP 3: Get PrimeCOD Data
     console.log('📦 STEP 3: Fetching PrimeCOD data...');
@@ -176,17 +186,30 @@ export default async function handler(req, res) {
         
         console.log(`📋 Retrieved ${leads.length} PrimeCOD leads`);
         
+        // Debug: Show the order email we're trying to match
+        console.log(`🔍 Looking for email: "${order.email}"`);
+        console.log(`🔍 Order created: ${order.createdAt}`);
+        
         // Find matching lead by email and date proximity
         matchingLead = leads.find(lead => {
-          if (!lead.email || !order.email) return false;
+          console.log(`  Checking lead: ${lead.email} (${lead.created_at})`);
+          
+          if (!lead.email || !order.email) {
+            console.log(`    ❌ Missing email data`);
+            return false;
+          }
           
           const emailMatch = lead.email.toLowerCase() === order.email.toLowerCase();
+          console.log(`    Email match: ${emailMatch}`);
+          
           if (!emailMatch) return false;
           
           // Check date proximity (within 7 days)
           const orderDate = new Date(order.createdAt);
           const leadDate = new Date(lead.created_at);
           const daysDiff = Math.abs(orderDate - leadDate) / (1000 * 60 * 60 * 24);
+          
+          console.log(`    Date difference: ${daysDiff.toFixed(1)} days`);
           
           return daysDiff <= 7;
         });
@@ -196,9 +219,18 @@ export default async function handler(req, res) {
           console.log(`✅ STEP 3 SUCCESS: Found PrimeCOD lead ${matchingLead.reference}`);
           console.log(`📦 Tracking: ${trackingNumber || 'Not available'}`);
           console.log(`🚚 Status: ${matchingLead.shipping_status}`);
-        } else {
-          console.log('⚠️ STEP 3: No matching PrimeCOD lead found');
-        }
+    } else {
+      console.log('⚠️ STEP 3: No matching PrimeCOD lead found');
+      console.log(`📧 Order email: "${order.email}"`);
+      console.log(`📅 Order date: ${order.createdAt}`);
+      console.log(`📊 Total leads checked: ${leads.length}`);
+      
+      // Show a few recent leads for debugging
+      console.log('🔍 Recent leads (first 3):');
+      leads.slice(0, 3).forEach((lead, index) => {
+        console.log(`  ${index + 1}. Email: ${lead.email}, Date: ${lead.created_at}, Ref: ${lead.reference}`);
+      });
+    }
       }
     } catch (error) {
       console.log(`⚠️ STEP 3 ERROR: ${error.message}`);
