@@ -93,8 +93,8 @@ export default async function handler(req, res) {
           email
           phone
           createdAt
-          financialStatus
-          fulfillmentStatus
+          displayFinancialStatus
+          displayFulfillmentStatus
           customer {
             firstName
             lastName
@@ -153,7 +153,7 @@ export default async function handler(req, res) {
     console.log(`✅ STEP 2 SUCCESS: Found Order ${order.name} (ID: ${orderId})`);
     console.log(`📊 Customer: ${order.customer?.firstName} ${order.customer?.lastName}`);
     console.log(`📧 Email: ${order.email}`);
-    console.log(`💰 Status: ${order.financialStatus}/${order.fulfillmentStatus}`);
+    console.log(`💰 Status: ${order.displayFinancialStatus}/${order.displayFulfillmentStatus}`);
     console.log(`🏷️ Tags: ${order.tags}`);
     
     // STEP 3: Get PrimeCOD Data
@@ -284,8 +284,8 @@ export default async function handler(req, res) {
         error: "❌ NO FULFILLMENT ORDERS FOUND",
         message: "Order has no fulfillment orders (might already be fulfilled or cancelled)",
         order_status: {
-          financial: order.financialStatus,
-          fulfillment: order.fulfillmentStatus
+          financial: order.displayFinancialStatus,
+          fulfillment: order.displayFulfillmentStatus
         }
       });
     }
