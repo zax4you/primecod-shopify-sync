@@ -12,7 +12,7 @@ export default async function handler(req, res) {
     // Step 1: Get sample of PrimeCOD leads
     console.log('📦 Step 1: Fetching PrimeCOD leads...');
     
-    const primecodResponse = await fetch('https://api.primecod.app/api/leads?limit=50', {
+    const primecodResponse = await fetch('https://api.primecod.app/api/leads?limit=30', {
       headers: {
         'Authorization': `Bearer ${PRIMECOD_TOKEN}`,
         'Content-Type': 'application/json'
@@ -74,8 +74,8 @@ export default async function handler(req, res) {
     
     const automationTests = [];
     
-    // Test with first 10 leads
-    const testLeads = leads.slice(0, Math.min(10, leads.length));
+    // Test with first 15 leads (more comprehensive)
+    const testLeads = leads.slice(0, Math.min(15, leads.length));
     
     for (const lead of testLeads) {
       const test = {
@@ -120,8 +120,8 @@ export default async function handler(req, res) {
     
     const matchingTests = [];
     
-    // Test matching for leads with emails
-    const leadsWithEmail = testLeads.filter(lead => lead.email).slice(0, 3);
+    // Test matching for leads with emails (test more)
+    const leadsWithEmail = testLeads.filter(lead => lead.email).slice(0, 5);
     
     for (const lead of leadsWithEmail) {
       try {
