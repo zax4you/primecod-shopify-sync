@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   
   if (req.method === 'GET') {
     // Step 1: Redirect to Shopify for authorization
-    const scopes = 'read_orders,write_orders,read_fulfillments,write_fulfillments';
+    const scopes = 'read_orders,write_orders,read_fulfillments,write_fulfillments,read_locations';
     const state = Math.random().toString(36).substring(7);
     
     const authUrl = `https://${SHOP}.myshopify.com/admin/oauth/authorize?` +
