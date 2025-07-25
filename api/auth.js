@@ -1,7 +1,7 @@
 // api/auth.js - Shopify OAuth Flow
 export default async function handler(req, res) {
-  const CLIENT_ID = 'fb3939015d86e6e4277e17c47bac5a1c';
-  const CLIENT_SECRET = '47381df987323ea9085a618a377ff45a';
+  const CLIENT_ID = 'b987dafd46623d4cbdd20d76a1d07ce7';
+  const CLIENT_SECRET = '3918fb48a354537cd701d4c9a0006972';
   const SHOP = '334c82-e3'; // Your actual store handle
   const REDIRECT_URI = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/callback`;
   
