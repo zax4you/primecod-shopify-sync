@@ -1,8 +1,5 @@
 {
   "functions": {
-    "api/*.js": {
-      "runtime": "@vercel/node"
-    },
     "api/sync-orders.js": {
       "maxDuration": 60
     }
