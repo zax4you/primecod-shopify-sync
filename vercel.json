@@ -3,13 +3,16 @@
     "api/*.js": {
       "runtime": "@vercel/node"
     },
-    "index.js": {
-      "runtime": "@vercel/node"
-    },
     "api/sync-orders.js": {
       "maxDuration": 60
     }
   },
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/index"
+    }
+  ],
   "crons": [
     {
       "path": "/api/sync-orders",
