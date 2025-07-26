@@ -1,4 +1,4 @@
-// api/dashboard.js
+// api/dashboard.js - Dashboard for PrimeCOD Order Automation
 export default async function handler(req, res) {
   try {
     // Get current time in Poland timezone
@@ -9,7 +9,7 @@ export default async function handler(req, res) {
     const nextSync = getNextSyncTime(polandTime);
     const timeUntilNext = getTimeUntilNext(polandTime, nextSync);
     
-    // Get last sync status (you could fetch this from a database or API in the future)
+    // Get last sync status
     const lastSyncStatus = {
       time: "July 26, 2025 at 10:18 AM",
       duration: "28.94s",
@@ -321,7 +321,7 @@ export default async function handler(req, res) {
             <a href="https://vercel.com/dashboard" target="_blank" class="button secondary">
               📊 Vercel Dashboard
             </a>
-            <a href="https://primecod-shopify-sync.vercel.app/api/test-primecod-tracking" class="button secondary">
+            <a href="/api/test-primecod-tracking" class="button secondary">
               🔍 Test Tracking Data
             </a>
           </div>
