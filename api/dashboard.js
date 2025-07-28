@@ -325,17 +325,14 @@ export default async function handler(req, res) {
         <div class="actions">
           <h3>🛠️ Quick Actions</h3>
           <div class="button-grid">
-            <a href="/api/sync-orders-with-storage" class="button success" onclick="return handleSync(this, 'Enhanced Sync with Live Data')">
-              🔄 Enhanced Sync (Live Dashboard)
-            </a>
-            <a href="/api/sync-orders-enhanced-matching-fixed" class="button" onclick="return handleSync(this, 'Enhanced Matching')">
-              🎯 Enhanced Matching
-            </a>
-            <a href="/api/sync-orders" class="button secondary" onclick="return handleSync(this, 'Original Sync')">
-              🔄 Original Sync
+            <a href="/api/sync-orders-enhanced-matching-fixed" class="button success" onclick="return handleSync(this, 'Enhanced Multi-Method Sync')">
+              🚀 Manual Sync Now
             </a>
             <a href="https://github.com/zax4you/primecod-shopify-sync/actions" target="_blank" class="button">
               📝 View GitHub Logs
+            </a>
+            <a href="https://vercel.com/dashboard" target="_blank" class="button secondary">
+              📊 Vercel Dashboard
             </a>
             <a href="/api/test-shopify-auth" class="button secondary">
               🔍 Test Authentication
